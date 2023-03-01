@@ -6,6 +6,13 @@ import dbus.mainloop.glib
 from gi.repository import GLib
 
 
+class NotPrivilegedException (dbus.DBusException):
+    _dbus_error_name = "org.example.HelloWorld.dbus.service.PolKit.NotPrivilegedException"
+    def __init__ (self, action_id, *p, **k):
+        self._dbus_error_name = self.__class__._dbus_error_name + "." + action_id
+        super (NotPrivilegedException, self).__init__ (*p, **k)
+
+
 class HelloWorld(dbus.service.Object):
     def __init__(self, conn=None, object_path=None, bus_name=None):
         self.dbus_info = None
@@ -17,8 +24,9 @@ class HelloWorld(dbus.service.Object):
         self._check_polkit_privilege(
             sender, conn, "com.example.HelloWorld.auth")
         return "Hello " + name
+        
 
-    def _check_polkit_privilege(self, sender, conn, privilege):
+    def _check_polkit_privilege(self, sender, conn, action_id):
         # Get Peer PID
         if self.dbus_info is None:
             # Get DBus Interface and get info thru that
@@ -39,14 +47,14 @@ class HelloWorld(dbus.service.Object):
             auth_response = self.polkit.CheckAuthorization(
                 ("unix-process", {"pid": dbus.UInt32(pid, variant_level=1),
                                   "start-time": dbus.UInt64(0, variant_level=1)}),
-                privilege, {"AllowUserInteraction": "true"}, dbus.UInt32(1), "", timeout=600)
+                action_id, {"AllowUserInteraction": "true"}, dbus.UInt32(1), "", timeout=600)
             print(auth_response)
             (is_auth, _, details) = auth_response
         except dbus.DBusException as e:
             if e._dbus_error_name == "org.freedesktop.DBus.Error.ServiceUnknown":
                 # polkitd timeout, retry
                 self.polkit = None
-                return self._check_polkit_privilege(sender, conn, privilege)
+                return self._check_polkit_privilege(sender, conn, action_id)
             else:
                 # it's another error, propagate it
                 raise
@@ -54,7 +62,7 @@ class HelloWorld(dbus.service.Object):
         if not is_auth:
             # Aww, not authorized :(
             print(":(")
-            return False
+            raise NotPrivilegedException(action_id)
 
         print("Successful authorization!")
         return True
